@@ -13,9 +13,13 @@
 #define SPACE_PIN          12
 #define CHAR_SEND_PIN      13
 #define DEFUALT_CHAR_COUNT 44
-#define TIME_TO_PRINT_CHAR 500 // Place holder
-
-#define QUEUE_LENGTH       256
+#define TIME_TO_PRINT_CHAR 1000 // Place holder, this is the time in
+                                // milliseconds that it takes for the
+                                // Selectric takes to print one character
+#define BAUD_RATE          1200 // Slowest baudrate Arduino serial monitor
+                                // will work with
+#define QUEUE_LENGTH       512  // 512 characters can be buffered, try to get
+                                // a lower baudrate
 
 cppQueue character_queue(sizeof(char), QUEUE_LENGTH, FIFO, true);
 
@@ -68,7 +72,7 @@ void setup() {
   pinMode(SPACE_PIN,        OUTPUT);
   pinMode(CHAR_SEND_PIN,    OUTPUT);
   
-  Serial.begin(9600);
+  Serial.begin(BAUD_RATE);
   while (!Serial) { }
 
   Serial.println("CONNECTED");
@@ -131,9 +135,7 @@ void send_character() {
       return;
     }
 
-    // We found a character, did we find it in the uppercase array?
-    if (shift)
-      digitalWrite(SHIFT_PIN, HIGH); // Yes, well enable the shift solenoid
+    digitalWrite(SHIFT_PIN, shift);
 
     int tilt = position % 4;
     int rotation = 0;
