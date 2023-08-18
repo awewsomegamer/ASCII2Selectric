@@ -19,10 +19,10 @@
 #define DEFUALT_CHAR_COUNT 44   // Number of characters per char_map
 #define TIME_TO_PRINT_char 65   // Milliseconds
 #define BREATHING_TIME     5    // Time between the characters
-#define BAUD_RATE          1200 // Slowest baudrate Arduino serial monitor
+#define BAUD_RATE          9600 // Slowest baudrate Arduino serial monitor
                                 // will work with
-#define QUEUE_LENGTH       256  // 256 characters can be buffered before transmitter has to shut up
-#define TERMINAL_BUFFER_SZ 30   // 30 characters to send to the terminal at a time (maximum)
+#define QUEUE_LENGTH       1024  // 256 characters can be buffered before transmitter has to shut up
+#define TERMINAL_BUFFER_SZ 512   // 30 characters to send to the terminal at a time (maximum)
 #define ESCAPE             27   // ASCII character used to pause communication (27 = Escape key)
 
 #define SOLENOID_PULL      LOW
@@ -31,13 +31,13 @@
 #define XON                0x11
 #define XOFF               0x13
 
-cppQueue character_queue(sizeof(char), QUEUE_LENGTH, FIFO, true);
+char static_queue_data[QUEUE_LENGTH];
+cppQueue character_queue(sizeof(char), QUEUE_LENGTH, FIFO, false, &static_queue_data, QUEUE_LENGTH * sizeof(char));
 char send_to_terminal[TERMINAL_BUFFER_SZ];
 int terminal_buffer_idx = 0;
 
 int character_sent = 0;
 int escaped = 0;
-int state = XON;
 unsigned long last_time = 0;
 
 // Designed for Standard U.S. 7XX type elements
@@ -115,14 +115,14 @@ void send(char c) {
 }
 
 void term_print() {
-  Serial.write(XON);
-
   for (int i = 0; i < terminal_buffer_idx; i++) {
     if (send_to_terminal[i] != -1)
       Serial.print(send_to_terminal[i]);
       
     send_to_terminal[i] = -1;
   }
+
+  terminal_buffer_idx = 0;
 }
 
 void special_character(char c) {
@@ -233,6 +233,8 @@ void send_character(int count) {
 
 void loop() {
   // Place characters into a buffer
+  Serial.write(XON);
+  
   char c = -1;
 
   if (Serial.available() > 0)
@@ -248,10 +250,26 @@ void loop() {
   // data echoed back to the terminal simply misses a few characters no matter
   // what I do. Maybe I should just switch over to pure C instead of bothering
   // with Arduino C++?
-  if (character_queue.getCount() > QUEUE_LENGTH - 30) {
+  
+  if (character_queue.getCount() > QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
+    // Turn off communications
     Serial.write(XOFF);
-    send_character(QUEUE_LENGTH / 4);
+    
+    character_queue.push(&c);
+    
+    // Read in any remaining characters
+    for (int i = 0; i < Serial.available() % TERMINAL_BUFFER_SZ; i++)
+      if ((c = (char)Serial.read()) && c != -1)
+        character_queue.push(&c);
+    
+    // Process characters
+    send_character(QUEUE_LENGTH);
+
+    // Echo to terminal
     term_print();
+
+    character_queue.flush();
+  
     return;
   }
   
