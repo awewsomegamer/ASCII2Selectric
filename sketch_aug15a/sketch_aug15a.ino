@@ -21,8 +21,8 @@
 #define BREATHING_TIME     5    // Time between the characters
 #define BAUD_RATE          9600 // Slowest baudrate Arduino serial monitor
                                 // will work with
-#define QUEUE_LENGTH       1024  // 256 characters can be buffered before transmitter has to shut up
-#define TERMINAL_BUFFER_SZ 512   // 30 characters to send to the terminal at a time (maximum)
+#define QUEUE_LENGTH       256  // 256 characters can be buffered before transmitter has to shut up
+#define TERMINAL_BUFFER_SZ 30   // 30 characters to send to the terminal at a time (maximum)
 #define ESCAPE             27   // ASCII character used to pause communication (27 = Escape key)
 
 #define SOLENOID_PULL      LOW
@@ -114,7 +114,10 @@ void send(char c) {
   send_to_terminal[terminal_buffer_idx++] = c;
 }
 
-void term_print() {
+void term_print() {  
+  if (terminal_buffer_idx > 0)
+    Serial.write(XON);
+  
   for (int i = 0; i < terminal_buffer_idx; i++) {
     if (send_to_terminal[i] != -1)
       Serial.print(send_to_terminal[i]);
@@ -160,7 +163,7 @@ void send_character(int count) {
       // If not, send one
       char c = 0;
       if (!character_queue.pop(&c))
-        return;
+        continue;
   
       send(c);
       
@@ -187,7 +190,7 @@ void send_character(int count) {
       // Have we truly found the character?
       if (position == -1) {
         special_character(c); // Apparently not, try a special character
-        return;
+        continue;
       }
   
       digitalWrite(SHIFT_PIN, shift ? SOLENOID_PULL : SOLENOID_RELEASE);
@@ -232,59 +235,32 @@ void send_character(int count) {
 }
 
 void loop() {
-  // Place characters into a buffer
-  Serial.write(XON);
-  
   char c = -1;
-
-  if (Serial.available() > 0)
-    c = (char)Serial.read();
-
-  // Seems like turning of serial communications causes de-synchrnoization
-  // I have been investigating:
-  // Bi-directional communication - maybe there is corruption on the line?
-  // Package control on the terminal side - maybe the terminal emulator only checks after X
-  // bytes to see if XOFF was called?
-  // Synchronization - Maybe we miss a character when turning off the communications?
-  // I do not know what is going wrong here, there is just a point where the
-  // data echoed back to the terminal simply misses a few characters no matter
-  // what I do. Maybe I should just switch over to pure C instead of bothering
-  // with Arduino C++?
   
-  if (character_queue.getCount() > QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
+  // Are we nearing a full queue?
+  if (character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
+    // If so:
     // Turn off communications
     Serial.write(XOFF);
-    
-    character_queue.push(&c);
-    
-    // Read in any remaining characters
-    for (int i = 0; i < Serial.available() % TERMINAL_BUFFER_SZ; i++)
+
+    int count = Serial.available() % TERMINAL_BUFFER_SZ;
+    for (int i = 0; i < count; i++)
       if ((c = (char)Serial.read()) && c != -1)
         character_queue.push(&c);
-    
-    // Process characters
-    send_character(QUEUE_LENGTH);
 
-    // Echo to terminal
-    term_print();
-
-    character_queue.flush();
-  
-    return;
+    while (character_queue.getCount() > TERMINAL_BUFFER_SZ) {
+      send_character(1);
+      term_print();
+    }
   }
-  
-  if (c == ESCAPE)
-    escaped = !escaped;
 
-  if (escaped) {
-    disable_all_pins();
-    return;
-  }
+  Serial.write(XON);
   
+  c = (char)Serial.read();
+
   if (c != -1)
     character_queue.push(&c);
-  
-  // Send the next character in the queue
+
   send_character(1);
 
   term_print();
