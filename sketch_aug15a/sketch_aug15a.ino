@@ -92,7 +92,7 @@ void setup() {
   while (!Serial) { }
 
   Serial.println("CONNECTED");
-  Serial.write(XOFF);
+//  Serial.write(XOFF); // Drivers don't support this
 }
 
 void disable_all_pins() {
@@ -108,21 +108,6 @@ void disable_all_pins() {
   digitalWrite(CARRIAGE_RET_PIN,        SOLENOID_RELEASE);
   digitalWrite(CHAR_SEND_PIN,           SOLENOID_RELEASE);
   digitalWrite(BELL_PIN,                SOLENOID_PULL);
-}
-
-void send(char c) {
-  send_to_terminal[terminal_buffer_idx++] = c;
-}
-
-void term_print() {  
-  for (int i = 0; i < terminal_buffer_idx; i++) {
-    if (send_to_terminal[i] != -1)
-      Serial.print(send_to_terminal[i]);
-      
-    send_to_terminal[i] = -1;
-  }
-
-  terminal_buffer_idx = 0;
 }
 
 void special_character(char c) {
@@ -151,124 +136,119 @@ void special_character(char c) {
   }
 }
 
-void send_character(int count) {
-  for (int i = 0; i < count; i++) {
-    // Have we sent a character?
-    if (character_sent == 0) {
-      // If not, send one
-      char c = 0;
-      if (!character_queue.pop(&c))
-        continue;
+void send_character() {
+  char c = -1;
   
-      send(c);
-      
-      int shift = 0;
-      int position = -1;
-      for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
-        if (c == char_map_lower[i]) {
-          position = i;
-          break;
-        }
+  // Have we sent a character?
+  if (character_sent == 0) {
+    // If not, send one
+    if (!character_queue.pop(&c))
+      return;
+    
+    int shift = 0;
+    int position = -1;
+    for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
+      if (c == char_map_lower[i]) {
+        position = i;
+        break;
       }
-  
-      // Have we found the lowercase position?
-      if (position == -1)
-        shift = 1; // No, so let's write that down
-        
-      for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
-        if (c == char_map_upper[i]) {
-          position = i;
-          break;
-        }
-      }    
-      
-      // Have we truly found the character?
-      if (position == -1) {
-        special_character(c); // Apparently not, try a special character
-        continue;
-      }
-  
-      digitalWrite(SHIFT_PIN, shift ? SOLENOID_PULL : SOLENOID_RELEASE);
-  
-      int tilt = position % 4;
-      int rotation = 0;
-  
-      if ((position / 4) >= 1 && (position / 4) <= 5) {
-        rotation = (position / 4); // The character is found in the negative field
-        digitalWrite(NROTATE_PIN, SOLENOID_PULL); // Tell hardware this is a negative rotation
-      } else if ((position / 4) >= 6 && (position / 4) <= 10) {
-        rotation = ((position / 4) - 5); // The character is found in the positive field
-      }
-      
-      // Encode tilt and rotation variables into the pins
-      digitalWrite(TILT1_PIN, (tilt & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-      digitalWrite(TILT2_PIN, ((tilt >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-  
-      digitalWrite(ROTATE1_PIN, (rotation & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-      digitalWrite(ROTATE2_PIN, ((rotation >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-      digitalWrite(ROTATE2A_PIN, ((rotation >> 2) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-  
-      // Pull character send solenoid
-      digitalWrite(CHAR_SEND_PIN, SOLENOID_PULL);
-      
-      // Set "character_sent" to 1
-      character_sent = 1;
-      // Keep track of the current time
-      last_time = millis();
     }
-  
-    // See if character print cycle has elapsed
-    if (millis() - last_time >= TIME_TO_PRINT_char && character_sent == 1)
-      disable_all_pins();
-  
-    // Breathe
-    if (millis() - last_time >= (TIME_TO_PRINT_char + BREATHING_TIME) && character_sent == 1)
-      character_sent = 0;
+
+    // Have we found the lowercase position?
+    if (position == -1)
+      shift = 1; // No, so let's write that down
+      
+    for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
+      if (c == char_map_upper[i]) {
+        position = i;
+        break;
+      }
+    }    
+    
+    // Have we truly found the character?
+    if (position == -1) {
+      special_character(c); // Apparently not, try a special character
+      goto echo_back;
+    }
+
+    digitalWrite(SHIFT_PIN, shift ? SOLENOID_PULL : SOLENOID_RELEASE);
+
+    int tilt = position % 4;
+    int rotation = 0;
+
+    if ((position / 4) >= 1 && (position / 4) <= 5) {
+      rotation = (position / 4); // The character is found in the negative field
+      digitalWrite(NROTATE_PIN, SOLENOID_PULL); // Tell hardware this is a negative rotation
+    } else if ((position / 4) >= 6 && (position / 4) <= 10) {
+      rotation = ((position / 4) - 5); // The character is found in the positive field
+    }
+    
+    // Encode tilt and rotation variables into the pins
+    digitalWrite(TILT1_PIN, (tilt & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+    digitalWrite(TILT2_PIN, ((tilt >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+
+    digitalWrite(ROTATE1_PIN, (rotation & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+    digitalWrite(ROTATE2_PIN, ((rotation >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+    digitalWrite(ROTATE2A_PIN, ((rotation >> 2) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+
+    // Pull character send solenoid
+    digitalWrite(CHAR_SEND_PIN, SOLENOID_PULL);
+    
+    // Set "character_sent" to 1
+    character_sent = 1;
+    // Keep track of the current time
+    last_time = millis();
   }
+
+  // See if character print cycle has elapsed
+  if (millis() - last_time >= TIME_TO_PRINT_char && character_sent == 1)
+    disable_all_pins();
+
+  // Breathe
+  if (millis() - last_time >= (TIME_TO_PRINT_char + BREATHING_TIME) && character_sent == 1)
+    character_sent = 0;
+
+  echo_back:
+  
+  // Echo the character back
+  if (character_sent == 0)
+    Serial.print(c);
  
   // Return back to main loop to buffer in more characters
 }
 
-void loop() {
-//  Serial.write(XOFF);
-//  Serial.flush();
-//  if (Serial.available() == 0)
-//    return;
-//  
-//  char c = (char)Serial.read();
+// XON/XOFF Band-aid:
+// Use CoolTerm
+// Goto Options > Transmission and enable the
+// "Wait for remote echo" option, the timeout
+// can be lowered to be above 70 ms.
 //
-//  if (c != -1) {
-//    if (c == '\r') {
-//      Serial.write('\n');
-//      Serial.flush();
-//    }
-//    Serial.write(c);
-//    Serial.flush();
-//  }
-  
+// Now large buffers can be transmitted through
+// CoolTerm to the board without having the
+// issue of the buffer moving on.
+
+void loop() {
   char c = -1;
   
   // Are we nearing a full queue?
   if (character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
     // If so:
     // Turn off communications
-    Serial.write(XOFF);
+//    Serial.write(XOFF); // Drivers don't support this
 
     int count = Serial.available() > TERMINAL_BUFFER_SZ ? TERMINAL_BUFFER_SZ : Serial.available();
     for (int i = 0; i < count; i++)
       if ((c = (char)Serial.read()) && c != -1)
         character_queue.push(&c);
 
-    while (character_queue.getCount() > 0) {
-      send_character(1);
-      term_print();
-    }
+    while (character_queue.getCount() > 0)
+      send_character();
 
     // Seems like by the time the above loop works its way
     // through the queue the transmission of bytes is already
     // done.
 
-    Serial.write(XON);
+//    Serial.write(XON); // Drivers don't support this
     
     return;
   }
@@ -278,7 +258,5 @@ void loop() {
   if (c != -1)
     character_queue.push(&c);
 
-  send_character(1);
-
-  term_print();
+  send_character();
 }
