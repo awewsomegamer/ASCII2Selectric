@@ -13,25 +13,31 @@
 #define SPACE_PIN          9
 #define TAB_PIN            10
 #define CARRIAGE_RET_PIN   11
-#define CHAR_SEND_PIN      12
+#define char_SEND_PIN      12
 #define BELL_PIN           13
 
 #define DEFUALT_CHAR_COUNT 44   // Number of characters per char_map
-#define TIME_TO_PRINT_CHAR 65   // Milliseconds
+#define TIME_TO_PRINT_char 65   // Milliseconds
 #define BREATHING_TIME     5    // Time between the characters
 #define BAUD_RATE          1200 // Slowest baudrate Arduino serial monitor
                                 // will work with
-#define QUEUE_LENGTH       512  // 512 characters can be buffered, try to get
-                                // a lower baudrate
-#define ESCAPE             27   // ASCII Character used to pause communication (27 = Escape key)
+#define QUEUE_LENGTH       256  // 256 characters can be buffered before transmitter has to shut up
+#define TERMINAL_BUFFER_SZ 30   // 30 characters to send to the terminal at a time (maximum)
+#define ESCAPE             27   // ASCII character used to pause communication (27 = Escape key)
 
 #define SOLENOID_PULL      LOW
 #define SOLENOID_RELEASE   HIGH
 
+#define XON                0x11
+#define XOFF               0x13
+
 cppQueue character_queue(sizeof(char), QUEUE_LENGTH, FIFO, true);
+char send_to_terminal[TERMINAL_BUFFER_SZ];
+int terminal_buffer_idx = 0;
 
 int character_sent = 0;
 int escaped = 0;
+int state = XON;
 unsigned long last_time = 0;
 
 // Designed for Standard U.S. 7XX type elements
@@ -80,7 +86,7 @@ void setup() {
   pinMode(SPACE_PIN,               OUTPUT);
   pinMode(TAB_PIN,                 OUTPUT);
   pinMode(CARRIAGE_RET_PIN,        OUTPUT);
-  pinMode(CHAR_SEND_PIN,           OUTPUT);
+  pinMode(char_SEND_PIN,           OUTPUT);
   pinMode(BELL_PIN,                OUTPUT);
   
   Serial.begin(BAUD_RATE);
@@ -100,8 +106,23 @@ void disable_all_pins() {
   digitalWrite(SPACE_PIN,               SOLENOID_RELEASE);
   digitalWrite(TAB_PIN,                 SOLENOID_RELEASE);
   digitalWrite(CARRIAGE_RET_PIN,        SOLENOID_RELEASE);
-  digitalWrite(CHAR_SEND_PIN,           SOLENOID_RELEASE);
+  digitalWrite(char_SEND_PIN,           SOLENOID_RELEASE);
   digitalWrite(BELL_PIN,                SOLENOID_PULL);
+}
+
+void send(char c) {
+  send_to_terminal[terminal_buffer_idx++] = c;
+}
+
+void term_print() {
+  Serial.write(XON);
+
+  for (int i = 0; i < terminal_buffer_idx; i++) {
+    if (send_to_terminal[i] != -1)
+      Serial.print(send_to_terminal[i]);
+      
+    send_to_terminal[i] = -1;
+  }
 }
 
 void special_character(char c) {
@@ -120,8 +141,10 @@ void special_character(char c) {
     break;
   }
   
-  case '\n':
-  case '\r': {
+  case '\r':
+    send('\n');
+  case '\n': {
+    send('\r');
     digitalWrite(CARRIAGE_RET_PIN, SOLENOID_PULL);
     character_sent = 1;
     last_time = millis();
@@ -130,80 +153,81 @@ void special_character(char c) {
   }
 }
 
-void send_character() {
-  // Have we sent a character?
-  if (character_sent == 0) {
-    // If not, send one
-    char c = 0;
-    if (!character_queue.pop(&c))
-      return;
-
-    // Echo character back to dumb terminal
-    Serial.print(c);
-    
-    int shift = 0;
-    int position = -1;
-    for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
-      if (c == char_map_lower[i]) {
-        position = i;
-        break;
-      }
-    }
-
-    // Have we found the lowercase position?
-    if (position == -1)
-      shift = 1; // No, so let's write that down
+void send_character(int count) {
+  for (int i = 0; i < count; i++) {
+    // Have we sent a character?
+    if (character_sent == 0) {
+      // If not, send one
+      char c = 0;
+      if (!character_queue.pop(&c))
+        return;
+  
+      send(c);
       
-    for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
-      if (c == char_map_upper[i]) {
-        position = i;
-        break;
+      int shift = 0;
+      int position = -1;
+      for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
+        if (c == char_map_lower[i]) {
+          position = i;
+          break;
+        }
       }
-    }    
-    
-    // Have we truly found the character?
-    if (position == -1) {
-      special_character(c); // Apparently not, try a special character
-      return;
+  
+      // Have we found the lowercase position?
+      if (position == -1)
+        shift = 1; // No, so let's write that down
+        
+      for (int i = 0; i < DEFUALT_CHAR_COUNT; i++) {
+        if (c == char_map_upper[i]) {
+          position = i;
+          break;
+        }
+      }    
+      
+      // Have we truly found the character?
+      if (position == -1) {
+        special_character(c); // Apparently not, try a special character
+        return;
+      }
+  
+      digitalWrite(SHIFT_PIN, shift ? SOLENOID_PULL : SOLENOID_RELEASE);
+  
+      int tilt = position % 4;
+      int rotation = 0;
+  
+      if ((position / 4) >= 1 && (position / 4) <= 5) {
+        rotation = (position / 4); // The character is found in the negative field
+        digitalWrite(NROTATE_PIN, SOLENOID_PULL); // Tell hardware this is a negative rotation
+      } else if ((position / 4) >= 6 && (position / 4) <= 10) {
+        rotation = ((position / 4) - 5); // The character is found in the positive field
+      }
+      
+      // Encode tilt and rotation variables into the pins
+      digitalWrite(TILT1_PIN, (tilt & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+      digitalWrite(TILT2_PIN, ((tilt >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+  
+      digitalWrite(ROTATE1_PIN, (rotation & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+      digitalWrite(ROTATE2_PIN, ((rotation >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+      digitalWrite(ROTATE2A_PIN, ((rotation >> 2) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
+  
+      // Pull character send solenoid
+      digitalWrite(char_SEND_PIN, SOLENOID_PULL);
+      
+      // Set "character_sent" to 1
+      character_sent = 1;
+      // Keep track of the current time
+      last_time = millis();
     }
-
-    digitalWrite(SHIFT_PIN, shift ? SOLENOID_PULL : SOLENOID_RELEASE);
-
-    int tilt = position % 4;
-    int rotation = 0;
-
-    if ((position / 4) >= 1 && (position / 4) <= 5) {
-      rotation = (position / 4); // The character is found in the negative field
-      digitalWrite(NROTATE_PIN, SOLENOID_PULL); // Tell hardware this is a negative rotation
-    } else if ((position / 4) >= 6 && (position / 4) <= 10) {
-      rotation = ((position / 4) - 5); // The character is found in the positive field
-    }
-    
-    // Encode tilt and rotation variables into the pins
-    digitalWrite(TILT1_PIN, (tilt & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-    digitalWrite(TILT2_PIN, ((tilt >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-
-    digitalWrite(ROTATE1_PIN, (rotation & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-    digitalWrite(ROTATE2_PIN, ((rotation >> 1) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-    digitalWrite(ROTATE2A_PIN, ((rotation >> 2) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
-
-    // Pull character send solenoid
-    digitalWrite(CHAR_SEND_PIN, SOLENOID_PULL);
-    
-    // Set "character_sent" to 1
-    character_sent = 1;
-    // Keep track of the current time
-    last_time = millis();
+  
+    // See if character print cycle has elapsed
+    if (millis() - last_time >= TIME_TO_PRINT_char && character_sent == 1)
+      disable_all_pins();
+  
+    // Breath
+    if (millis() - last_time >= (TIME_TO_PRINT_char + BREATHING_TIME) && character_sent == 1)
+      character_sent = 0;
   }
-
-  // See if character print cycle has elapsed
-  if (millis() - last_time >= TIME_TO_PRINT_CHAR && character_sent == 1)
-    disable_all_pins();
-
-  // Breath
-  if (millis() - last_time >= (TIME_TO_PRINT_CHAR + BREATHING_TIME) && character_sent == 1)
-    character_sent = 0;
-    
+ 
   // Return back to main loop to buffer in more characters
 }
 
@@ -214,6 +238,23 @@ void loop() {
   if (Serial.available() > 0)
     c = (char)Serial.read();
 
+  // Seems like turning of serial communications causes de-synchrnoization
+  // I have been investigating:
+  // Bi-directional communication - maybe there is corruption on the line?
+  // Package control on the terminal side - maybe the terminal emulator only checks after X
+  // bytes to see if XOFF was called?
+  // Synchronization - Maybe we miss a character when turning off the communications?
+  // I do not know what is going wrong here, there is just a point where the
+  // data echoed back to the terminal simply misses a few characters no matter
+  // what I do. Maybe I should just switch over to pure C instead of bothering
+  // with Arduino C++?
+  if (character_queue.getCount() > QUEUE_LENGTH - 30) {
+    Serial.write(XOFF);
+    send_character(QUEUE_LENGTH / 4);
+    term_print();
+    return;
+  }
+  
   if (c == ESCAPE)
     escaped = !escaped;
 
@@ -226,5 +267,7 @@ void loop() {
     character_queue.push(&c);
   
   // Send the next character in the queue
-  send_character();
+  send_character(1);
+
+  term_print();
 }
