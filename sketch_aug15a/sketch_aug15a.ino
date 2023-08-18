@@ -92,6 +92,7 @@ void setup() {
   while (!Serial) { }
 
   Serial.println("CONNECTED");
+  Serial.write(XOFF);
 }
 
 void disable_all_pins() {
@@ -114,9 +115,6 @@ void send(char c) {
 }
 
 void term_print() {  
-  if (terminal_buffer_idx > 0)
-    Serial.write(XON);
-  
   for (int i = 0; i < terminal_buffer_idx; i++) {
     if (send_to_terminal[i] != -1)
       Serial.print(send_to_terminal[i]);
@@ -144,9 +142,7 @@ void special_character(char c) {
   }
   
   case '\r':
-    send('\n');
   case '\n': {
-    send('\r');
     digitalWrite(CARRIAGE_RET_PIN, SOLENOID_PULL);
     character_sent = 1;
     last_time = millis();
@@ -225,7 +221,7 @@ void send_character(int count) {
     if (millis() - last_time >= TIME_TO_PRINT_char && character_sent == 1)
       disable_all_pins();
   
-    // Breath
+    // Breathe
     if (millis() - last_time >= (TIME_TO_PRINT_char + BREATHING_TIME) && character_sent == 1)
       character_sent = 0;
   }
@@ -234,6 +230,22 @@ void send_character(int count) {
 }
 
 void loop() {
+//  Serial.write(XOFF);
+//  Serial.flush();
+//  if (Serial.available() == 0)
+//    return;
+//  
+//  char c = (char)Serial.read();
+//
+//  if (c != -1) {
+//    if (c == '\r') {
+//      Serial.write('\n');
+//      Serial.flush();
+//    }
+//    Serial.write(c);
+//    Serial.flush();
+//  }
+  
   char c = -1;
   
   // Are we nearing a full queue?
@@ -242,7 +254,7 @@ void loop() {
     // Turn off communications
     Serial.write(XOFF);
 
-    int count = Serial.available() % TERMINAL_BUFFER_SZ;
+    int count = Serial.available() > TERMINAL_BUFFER_SZ ? TERMINAL_BUFFER_SZ : Serial.available();
     for (int i = 0; i < count; i++)
       if ((c = (char)Serial.read()) && c != -1)
         character_queue.push(&c);
@@ -250,17 +262,16 @@ void loop() {
     while (character_queue.getCount() > 0) {
       send_character(1);
       term_print();
-      Serial.write(XOFF);
     }
 
     // Seems like by the time the above loop works its way
     // through the queue the transmission of bytes is already
     // done.
+
+    Serial.write(XON);
     
     return;
   }
-
-  Serial.write(XON);
   
   c = (char)Serial.read();
 
