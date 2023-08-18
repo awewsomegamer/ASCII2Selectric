@@ -13,14 +13,13 @@
 #define SPACE_PIN          9
 #define TAB_PIN            10
 #define CARRIAGE_RET_PIN   11
-#define char_SEND_PIN      12
+#define CHAR_SEND_PIN      12
 #define BELL_PIN           13
 
 #define DEFUALT_CHAR_COUNT 44   // Number of characters per char_map
 #define TIME_TO_PRINT_char 65   // Milliseconds
 #define BREATHING_TIME     5    // Time between the characters
-#define BAUD_RATE          9600 // Slowest baudrate Arduino serial monitor
-                                // will work with
+#define BAUD_RATE          9600
 #define QUEUE_LENGTH       256  // 256 characters can be buffered before transmitter has to shut up
 #define TERMINAL_BUFFER_SZ 30   // 30 characters to send to the terminal at a time (maximum)
 #define ESCAPE             27   // ASCII character used to pause communication (27 = Escape key)
@@ -86,7 +85,7 @@ void setup() {
   pinMode(SPACE_PIN,               OUTPUT);
   pinMode(TAB_PIN,                 OUTPUT);
   pinMode(CARRIAGE_RET_PIN,        OUTPUT);
-  pinMode(char_SEND_PIN,           OUTPUT);
+  pinMode(CHAR_SEND_PIN,           OUTPUT);
   pinMode(BELL_PIN,                OUTPUT);
   
   Serial.begin(BAUD_RATE);
@@ -106,7 +105,7 @@ void disable_all_pins() {
   digitalWrite(SPACE_PIN,               SOLENOID_RELEASE);
   digitalWrite(TAB_PIN,                 SOLENOID_RELEASE);
   digitalWrite(CARRIAGE_RET_PIN,        SOLENOID_RELEASE);
-  digitalWrite(char_SEND_PIN,           SOLENOID_RELEASE);
+  digitalWrite(CHAR_SEND_PIN,           SOLENOID_RELEASE);
   digitalWrite(BELL_PIN,                SOLENOID_PULL);
 }
 
@@ -214,7 +213,7 @@ void send_character(int count) {
       digitalWrite(ROTATE2A_PIN, ((rotation >> 2) & 1) ? SOLENOID_PULL : SOLENOID_RELEASE);
   
       // Pull character send solenoid
-      digitalWrite(char_SEND_PIN, SOLENOID_PULL);
+      digitalWrite(CHAR_SEND_PIN, SOLENOID_PULL);
       
       // Set "character_sent" to 1
       character_sent = 1;
@@ -248,10 +247,17 @@ void loop() {
       if ((c = (char)Serial.read()) && c != -1)
         character_queue.push(&c);
 
-    while (character_queue.getCount() > TERMINAL_BUFFER_SZ) {
+    while (character_queue.getCount() > 0) {
       send_character(1);
       term_print();
+      Serial.write(XOFF);
     }
+
+    // Seems like by the time the above loop works its way
+    // through the queue the transmission of bytes is already
+    // done.
+    
+    return;
   }
 
   Serial.write(XON);
