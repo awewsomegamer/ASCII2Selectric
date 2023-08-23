@@ -229,62 +229,49 @@ void send_character() {
 
 void loop() {
   char c = -1;
-
-  
   
   // Are we nearing a full queue?
-  switch (status) {
-  case 0:
-    if (status == 0 && character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
-      status = 1;
-          
-      Serial.write(XOFF);
-      Serial.flush();
-      
-      return;
-    }
+  if (status == 0 && character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
+    status = 1;
+        
+    Serial.write(XOFF);
+    Serial.flush();
+//    Serial.print("XOFF ");
+//    Serial.print(status);
+//    Serial.println();
+    
+    return;
+  }
 
-   case 1:
-    if (Serial.available() > 0) {
-      if ((c = (char)Serial.read()) && c != -1)
-        character_queue.push(&c);
-
-      send_character();
-    }
-
+  if (status == 1) {
+//    if (Serial.available() > 0) {
+//      if ((c = (char)Serial.read()) && c != -1)
+//        character_queue.push(&c);
+//  
+//      send_character();
+//    }
+  
+    send_character();
+  
     if (character_queue.isEmpty())
       status = 2;
 
+//    Serial.print("Processing ");
+//    Serial.print(status);
+//    Serial.println();
+    
     return;
+  }
 
-  case 2:
+  if (status == 2) {
     Serial.write(XON);
     Serial.flush();
     status = 0;
-    
-    break;
+
+//    Serial.print("XON ");
+//    Serial.print(status);
+//    Serial.println();
   }
-  
-
-//    while (Serial.available() > 0) {
-//      int count = Serial.available() > TERMINAL_BUFFER_SZ ? TERMINAL_BUFFER_SZ : Serial.available();
-//      for (int i = 0; i < count; i++)
-//        if ((c = (char)Serial.read()) && c != -1)
-//          character_queue.push(&c);
-//  
-//      for (int i = 0; i < QUEUE_LENGTH; i++)
-//        send_character();
-//    }
-//    
-//    // Seems like by the time the above loop works its way
-//    // through the queue the transmission of bytes is already
-//    // done.
-//
-//    Serial.write(XON);
-//    Serial.flush();
-//    status = 0;
-    
-
 
   c = (char)Serial.read();
 
@@ -292,22 +279,4 @@ void loop() {
     character_queue.push(&c);
 
   send_character();
-
-//  if (status == 0 && character_queue.getCount() < QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
-//    c = (char)Serial.read();
-//  
-//    if (c != -1)
-//      character_queue.push(&c);
-//  } else {
-//    Serial.write(XOFF);
-//    Serial.flush();
-//    
-//    status = 1;
-//    send_character();
-//  }
-
-//  if (status == 1 && character_queue.isEmpty()) {
-//    Serial.write(XON);
-//    status = 0;
-//  }
 }
