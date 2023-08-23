@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <SoftwareSerial.h>
 #include <cppQueue.h>
 
 // These names are extracted from "IBM Selectric APM - Nov 1980.pdf"
@@ -19,9 +20,9 @@
 #define DEFUALT_CHAR_COUNT 44   // Number of characters per char_map
 #define TIME_TO_PRINT_char 65   // Milliseconds
 #define BREATHING_TIME     5    // Time between the characters
-#define BAUD_RATE          9600
+#define BAUD_RATE          1200
 #define QUEUE_LENGTH       256  // 256 characters can be buffered before transmitter has to shut up
-#define TERMINAL_BUFFER_SZ 30   // 30 characters to send to the terminal at a time (maximum)
+#define TERMINAL_BUFFER_SZ 32   // 30 characters to send to the terminal at a time (maximum)
 #define ESCAPE             27   // ASCII character used to pause communication (27 = Escape key)
 
 #define SOLENOID_PULL      LOW
@@ -37,6 +38,7 @@ int terminal_buffer_idx = 0;
 
 int character_sent = 0;
 int escaped = 0;
+int status = 0;
 unsigned long last_time = 0;
 
 // Designed for Standard U.S. 7XX type elements
@@ -92,7 +94,8 @@ void setup() {
   while (!Serial) { }
 
   Serial.println("CONNECTED");
-//  Serial.write(XOFF); // Drivers don't support this
+  Serial.write(XON);
+  Serial.flush();
 }
 
 void disable_all_pins() {
@@ -144,6 +147,11 @@ void send_character() {
     // If not, send one
     if (!character_queue.pop(&c))
       return;
+
+    if (c == '\n')
+      Serial.print('\r');
+      
+    Serial.print(c);
     
     int shift = 0;
     int position = -1;
@@ -166,10 +174,8 @@ void send_character() {
     }    
     
     // Have we truly found the character?
-    if (position == -1) {
+    if (position == -1)
       special_character(c); // Apparently not, try a special character
-      goto echo_back;
-    }
 
     digitalWrite(SHIFT_PIN, shift ? SOLENOID_PULL : SOLENOID_RELEASE);
 
@@ -207,12 +213,6 @@ void send_character() {
   // Breathe
   if (millis() - last_time >= (TIME_TO_PRINT_char + BREATHING_TIME) && character_sent == 1)
     character_sent = 0;
-
-  echo_back:
-  
-  // Echo the character back
-  if (character_sent == 0)
-    Serial.print(c);
  
   // Return back to main loop to buffer in more characters
 }
@@ -229,34 +229,85 @@ void send_character() {
 
 void loop() {
   char c = -1;
+
+  
   
   // Are we nearing a full queue?
-  if (character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
-    // If so:
-    // Turn off communications
-//    Serial.write(XOFF); // Drivers don't support this
+  switch (status) {
+  case 0:
+    if (status == 0 && character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
+      status = 1;
+          
+      Serial.write(XOFF);
+      Serial.flush();
+      
+      return;
+    }
 
-    int count = Serial.available() > TERMINAL_BUFFER_SZ ? TERMINAL_BUFFER_SZ : Serial.available();
-    for (int i = 0; i < count; i++)
+   case 1:
+    if (Serial.available() > 0) {
       if ((c = (char)Serial.read()) && c != -1)
         character_queue.push(&c);
 
-    while (character_queue.getCount() > 0)
       send_character();
+    }
 
-    // Seems like by the time the above loop works its way
-    // through the queue the transmission of bytes is already
-    // done.
+    if (character_queue.isEmpty())
+      status = 2;
 
-//    Serial.write(XON); // Drivers don't support this
-    
     return;
+
+  case 2:
+    Serial.write(XON);
+    Serial.flush();
+    status = 0;
+    
+    break;
   }
   
+
+//    while (Serial.available() > 0) {
+//      int count = Serial.available() > TERMINAL_BUFFER_SZ ? TERMINAL_BUFFER_SZ : Serial.available();
+//      for (int i = 0; i < count; i++)
+//        if ((c = (char)Serial.read()) && c != -1)
+//          character_queue.push(&c);
+//  
+//      for (int i = 0; i < QUEUE_LENGTH; i++)
+//        send_character();
+//    }
+//    
+//    // Seems like by the time the above loop works its way
+//    // through the queue the transmission of bytes is already
+//    // done.
+//
+//    Serial.write(XON);
+//    Serial.flush();
+//    status = 0;
+    
+
+
   c = (char)Serial.read();
 
-  if (c != -1)
+  if (c != - 1)
     character_queue.push(&c);
 
   send_character();
+
+//  if (status == 0 && character_queue.getCount() < QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
+//    c = (char)Serial.read();
+//  
+//    if (c != -1)
+//      character_queue.push(&c);
+//  } else {
+//    Serial.write(XOFF);
+//    Serial.flush();
+//    
+//    status = 1;
+//    send_character();
+//  }
+
+//  if (status == 1 && character_queue.isEmpty()) {
+//    Serial.write(XON);
+//    status = 0;
+//  }
 }
