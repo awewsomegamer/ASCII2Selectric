@@ -33,12 +33,10 @@
 
 char static_queue_data[QUEUE_LENGTH];
 cppQueue character_queue(sizeof(char), QUEUE_LENGTH, FIFO, false, &static_queue_data, QUEUE_LENGTH * sizeof(char));
-char send_to_terminal[TERMINAL_BUFFER_SZ];
-int terminal_buffer_idx = 0;
 
 int character_sent = 0;
 int escaped = 0;
-int status = 0;
+int buffering = 0;
 unsigned long last_time = 0;
 
 // Designed for Standard U.S. 7XX type elements
@@ -231,8 +229,8 @@ void loop() {
   char c = -1;
   
   // Are we nearing a full queue?
-  if (status == 0 && character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
-    status = 1;
+  if (!buffering && character_queue.getCount() >= QUEUE_LENGTH - TERMINAL_BUFFER_SZ) {
+    buffering = 1;
         
     Serial.write(XOFF);
     Serial.flush();
@@ -243,7 +241,7 @@ void loop() {
     return;
   }
 
-  if (status == 1) {
+  if (buffering) {
 //    if (Serial.available() > 0) {
 //      if ((c = (char)Serial.read()) && c != -1)
 //        character_queue.push(&c);
@@ -253,24 +251,17 @@ void loop() {
   
     send_character();
   
-    if (character_queue.isEmpty())
-      status = 2;
+    if (character_queue.isEmpty()) {
+      Serial.write(XON);
+      Serial.flush();
+      buffering = 0;
+    }
 
 //    Serial.print("Processing ");
 //    Serial.print(status);
 //    Serial.println();
     
     return;
-  }
-
-  if (status == 2) {
-    Serial.write(XON);
-    Serial.flush();
-    status = 0;
-
-//    Serial.print("XON ");
-//    Serial.print(status);
-//    Serial.println();
   }
 
   c = (char)Serial.read();
